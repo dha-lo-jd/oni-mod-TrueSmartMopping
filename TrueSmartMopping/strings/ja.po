@@ -1,0 +1,78 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: True Smart Mopping\n"
+"Application: Oxygen Not Included\n"
+"POT Version: 2.0\n"
+"Language: ja_JP\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgctxt "TrueSmartMopping.STRINGS.TOOLS.SMARTMOP.NAME"
+msgid "Smart Mopping"
+msgstr "スマート拭き取り"
+
+msgctxt "TrueSmartMopping.STRINGS.TOOLS.SMARTMOP.TOOLTIP"
+msgid "Direct duplicants to efficiently mop up liquid from the edges."
+msgstr "液体の端から効率よく拭き取る作業を指示します"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.NAME"
+msgid "Auto Mopping"
+msgstr "自動拭き取り"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.TOOLTIP"
+msgid "Duplicants automatically sweep up liquid when they touch it. You can configure blocked areas and priority settings."
+msgstr "液体に触れた複製人間が自動で拭き取ります。禁止区域と優先度を設定できます。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.ENABLED.NAME"
+msgid "Enable auto-mopping"
+msgstr "自動拭き取りを有効化"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.ENABLED.TOOLTIP"
+msgid "Duplicants automatically sweep up liquid when they touch it."
+msgstr "液体に触れた複製人間が自動で拭き取ります。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.LIQUID.TOOLTIP"
+msgid "Include this liquid in auto-mopping."
+msgstr "この液体を自動拭き取りの対象に含めます。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.DESC.LINE_0"
+msgid "Duplicants automatically sweep up liquid when they touch it."
+msgstr "液体に触れた複製人間が自動で拭き取ります。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.DESC.LINE_1"
+msgid "Drag to define a region and create a no-mop zone for that area."
+msgstr "ドラッグで範囲を指定すると、その範囲に拭き取り禁止区域を作成します。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.DESC.LINE_2"
+msgid "Drag again inside the restricted area to remove it."
+msgstr "禁止区域内をもう一度ドラッグすると解除します。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.DESC.LINE_3"
+msgid "This area will be excluded from auto-mopping."
+msgstr "自動拭き取り禁止区域を設定します。"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.SECTION.BASIC"
+msgid "[Basic Settings]"
+msgstr "【基本設定】"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.SECTION.PRIORITY"
+msgid "[Priority]"
+msgstr "【優先度】"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.SECTION.BLOCKED"
+msgid "[Blocked Areas]"
+msgstr "【禁止区域】"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.SECTION.TARGET"
+msgid "[Target Liquids]"
+msgstr "【対象の液体】"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.CLEAR.FORMAT"
+msgid "Clear all blocked areas ({0} cells)"
+msgstr "全ての禁止区域をクリア（{0}マス）"
+
+msgctxt "TrueSmartMopping.STRINGS.OVERLAY.CLEAR.TOOLTIP"
+msgid "Remove every auto-mop restricted area defined by dragging."
+msgstr "ドラッグで指定した自動拭き取り禁止区域をすべて解除します。"
