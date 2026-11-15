@@ -1,0 +1,64 @@
+[h1]"TRUE" Smart Mopping[/h1]
+
+Polluted water trickles in, bit by bit, and your dupes, ever so dutiful, keep mopping it up, 37 grams at a time...
+
+Enough with the tedious, high-maintenance micromanagement of every single spill! Oh, and look: someone dropped some ice, and now it's melting all over your living quarters!
+
+It sounds like it's time for [b]"TRUE" Smart Mopping.[/b]
+
+[h2]✨ Smart Mopping[/h2]
+
+"TRUE" Smart Mopping introduces two key features.
+
+The first feature is [b]"Smart Mopping."[/b]
+
+Instead of the standard mopping command, use the [b]Smart Mopping[/b] tool. No need for fussy area selection: just click anywhere on the puddle, and the game will automatically place the task in the most efficient spot, mopping up the liquid from its edges.
+
+Then, just sit back and wait. [i]Scourgify![/i]
+
+Surprisingly, Smart Mopping doesn't cheat or artificially boost your dupes' mopping speed; it performs exactly the same as the standard mopping task.
+
+If you're exceptionally diligent, and willing to sacrifice your precious time and focus, you could technically achieve the same results using only the base-game mopping commands.
+
+[h2]✨ Auto-Mopping[/h2]
+
+The second feature is [b]"Auto-Mopping."[/b]
+
+Ever found your pristine living quarters suddenly flooded with liquid?
+
+Auto-Mopping is here to protect both your sanity and your base.
+
+Whenever a dupe comes into contact with a liquid, an auto-mop task is triggered: specifically, a [b][i]Smart Mopping[/i][/b] task.
+
+Of course, I'm well aware that many of you use liquid airlocks to maintain a vacuum or spill small amounts of liquid to cool down your buildings.
+
+To keep Auto-Mopping from becoming a [i]"liquid airlock eater,"[/i] I've included an option to designate [b]"no-mop" zones.[/b] Drag to define a region and create a no-mop zone for that area; drag again inside it to remove it.
+
+You can configure these settings in the [b]Auto Mopping[/b] overlay.
+
+In this overlay, you can also:
+[list]
+[*] Turn auto-mopping on or off.
+[*] Filter the types of liquids to be automatically mopped up.
+[*] Adjust the priority for auto-mopping tasks.
+[*] Clear all no-mop zones at once.
+[/list]
+
+If a dupe is already assigned a task with a higher priority than auto-mopping, no auto-mop task will be triggered when they step in liquid on their way to that task.
+
+[h2]Notes[/h2]
+[list]
+[*] English and Japanese.
+[/list]
+
+[h2]Credits[/h2]
+Uses [b]PLib[/b] by Peter Han (MIT License) for the translation; it is bundled in the mod, so nothing else needs to be installed.
+
+[h2]Feedback & Suggestions[/h2]
+
+Questions, feedback, requests, and positive ratings are all very welcome!
+
+If you enjoy the mod, please consider leaving a positive rating. Thanks for your support!
+
+[h2]Source[/h2]
+[url=https://github.com/dha-lo-jd/oni-mod-TrueSmartMopping]GitHub[/url] (MIT License)
