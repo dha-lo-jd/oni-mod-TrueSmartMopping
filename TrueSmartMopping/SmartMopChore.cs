@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 namespace TrueSmartMopping
@@ -274,6 +274,7 @@ namespace TrueSmartMopping
             /// <summary>True when all remembered liquid and its neighbours can no longer be mopped.</summary>
             public bool IsExhausted()
             {
+                using var scope = Scope();
                 return SmartMopTargets.IsExhausted(standMemory, element, MopTool.maxMopAmt);
             }
 
@@ -329,6 +330,7 @@ namespace TrueSmartMopping
             /// <summary>Re-collects the connected liquid around the current standing cell and merges it into the memory.</summary>
             public void RefreshRemembered()
             {
+                using var scope = Scope();
                 var fresh = SmartMopTargets.CollectConnected(SmartMopTargets.CellAndNeighbours(targetCell), element, 4000);
                 remembered.UnionWith(fresh);
             }
@@ -356,12 +358,14 @@ namespace TrueSmartMopping
 
             public int WindowCount()
             {
+                using var scope = Scope();
                 return SmartMopTargets.WindowCount(targetCell, element, MopTool.maxMopAmt);
             }
 
             /// <summary>Mops one tick worth of every mop-able cell within range of the standing cell.</summary>
             public void MopWindow()
             {
+                using var scope = Scope();
                 mopTicks++;
                 MopCell(Grid.CellLeft(targetCell));
                 MopCell(targetCell);
@@ -375,7 +379,6 @@ namespace TrueSmartMopping
                     return;
                 }
                 float amount = Mathf.Min(Grid.Mass[cell], MopAmountPerTick);
-                totalMopped += amount;
                 Moppable.MopCell(cell, amount, (mass_cb, data) =>                 SpawnChunk(mass_cb));
             }
 
@@ -386,6 +389,8 @@ namespace TrueSmartMopping
                                 {
                                     return;
                                 }
+                                totalMopped += mass_cb.mass; // what the simulation actually removed
+                                steps = 0; // progress: the step budget only stops an order that keeps walking without removing anything
                                 var elem = ElementLoader.elements[mass_cb.elemIdx];
                                 var pos = Grid.CellToPosCCC(targetCell, Grid.SceneLayer.Ore);
                                 var go = LiquidSourceManager.Instance.CreateChunk(elem, mass_cb.mass, mass_cb.temperature,
@@ -399,20 +404,505 @@ namespace TrueSmartMopping
             /// </summary>
             public bool TryReposition()
             {
-                if (!HasStepBudget() || targetCell == Grid.InvalidCell)
+                using var scope = Scope();
+                if (targetCell == Grid.InvalidCell || repositions >= MaxRepositions)
                 {
+                    return false;
+                }
+                if (UpdateDryFront())
+                {
+                    // Dry front: the order stays until its range is completely dry, then TryFindNext moves it along the edge.
+                    pendingStand = Grid.InvalidCell;
+                    pendingTicks = 0;
+                    if (!dryFrontPlaced)
+                    {
+                        // Entering the stage: go to the end of the liquid once, wherever the order stood.
+                        dryFrontPlaced = true;
+                        int edge = FindEdgeStand(WorkerCell());
+                        if (edge != Grid.InvalidCell && edge != targetCell)
+                        {
+                            Debug.Log("[TrueSmartMopping] dry front: " + targetCell + " -> " + edge + " (start)");
+                            targetCell = edge;
+                            return true;
+                        }
+                    }
                     return false;
                 }
                 int best = SmartMopTargets.FindPreferredStand(targetCell, targetCell, element, MopTool.maxMopAmt, Blocked, NearOther, WorkerCell(), standMemory);
+                bool rich = false;
+                // Low yield: the current range holds only a trickle while a clearly richer one exists (the liquid has flowed away).
+                float here = SmartMopTargets.WindowPotential(targetCell, element, MopTool.maxMopAmt, MopAmountPerTick);
+                if (here < LowYieldKg)
+                {
+                    int richer = FindRichStand(WorkerCell(), targetCell, out float potential, null, RichMaxDistance);
+                    if (richer != Grid.InvalidCell && potential >= Mathf.Max(RichFactor * here, here + RichMinGainKg))
+                    {
+                        best = richer;
+                        rich = true;
+                    }
+                }
                 if (best == Grid.InvalidCell || best == targetCell)
+                {
+                    pendingStand = Grid.InvalidCell;
+                    pendingTicks = 0;
+                    return false;
+                }
+                // Hysteresis: the liquid keeps flowing, so near-equal stands flip back and forth (the duplicant then walks one cell
+                // to and fro). Move only when the new stand covers at least two more cells of liquid, or the current one covers
+                // none, and only once the same candidate has stayed best for RepositionWaitTicks consecutive checks.
+                if (!rich && SmartMopTargets.WindowCount(best, element, MopTool.maxMopAmt) - WindowCount() < 2 && WindowCount() > 0)
+                {
+                    pendingStand = Grid.InvalidCell;
+                    pendingTicks = 0;
+                    return false;
+                }
+                if (best != pendingStand)
+                {
+                    pendingStand = best;
+                    pendingTicks = 1;
+                }
+                else
+                {
+                    pendingTicks++;
+                }
+                if (pendingTicks < RepositionWaitTicks)
                 {
                     return false;
                 }
-                steps++;
-                Debug.Log("[TrueSmartMopping] reposition: " + targetCell + " -> " + best);
+                pendingStand = Grid.InvalidCell;
+                pendingTicks = 0;
+                repositions++;
+                Debug.Log("[TrueSmartMopping] reposition: " + targetCell + " -> " + best + (rich ? " (richer)" : ""));
                 targetCell = best;
                 return true;
             }
+
+            // Two passes: the first one mops everything above SmartMopTargets.MinLiquidMass per cell and ignores the thin films
+            // that keep creeping around; once only films are left (and the rest is thin enough that little flows in), a second
+            // pass sweeps them with no lower limit (SweepMinMass = 0): an order never ends while any mop-able liquid is left.
+            public const float SweepMinMass = 0f;
+            public bool sweep;
+
+            private float MinMass
+            {
+                get { return sweep ? SweepMinMass : SmartMopTargets.MinLiquidMass; }
+            }
+
+            private SmartMopTargets.ThresholdScope Scope()
+            {
+                return SmartMopTargets.Threshold(MinMass);
+            }
+
+            /// <summary>Switches to the sweep pass; false when it already is one.</summary>
+            private bool EnterSweep()
+            {
+                if (sweep)
+                {
+                    return false;
+                }
+                sweep = true;
+                steps = 0;
+                Debug.Log("[TrueSmartMopping] sweep pass: thin films only");
+                using (Scope())
+                {
+                    if (!Grid.IsValidCell(targetCell))
+                    {
+                        return true;
+                    }
+                    var fresh = SmartMopTargets.CollectConnected(SmartMopTargets.CellAndNeighbours(targetCell), element, 4000);
+                    remembered.UnionWith(fresh);
+                }
+                return true;
+            }
+
+            /// <summary>True when nothing is left to mop in either pass.</summary>
+            public bool CheckFinished()
+            {
+                if (!IsExhausted())
+                {
+                    return false;
+                }
+                return !EnterSweep() || IsExhausted();
+            }
+
+            // Helper orders: a vanilla mop placer lets two duplicants work one puddle, so a manual order that has plenty of
+            // liquid left out of its own reach hands out further orders (same priority, own stand) for idle duplicants.
+            // Next to another order: only a rich window keeps its distance (two duplicants would share the same liquid); in the
+            // thin tail they work side by side, as with vanilla placers, so the one at the edge finishes quickly and they leapfrog.
+            // Dry front. Skimming the richest ranges is fast while the liquid is thick, but it leaves a thin film on every cell
+            // that hardly flows and has to be visited again cell by cell. So once no range holds more than DryFrontKg, the
+            // order works like a vanilla errand: it stands at the end of the liquid (the end nearest to the worker), mops that
+            // range until it is completely dry (no lower mass limit) and only then moves one range inward. The liquid then
+            // shrinks from its ends and no film is left behind.
+            public const float DryFrontKg = 12f;
+            public const float DryFrontLeaveKg = 40f;
+            public bool dryFront;
+            private bool dryFrontPlaced;
+
+            /// <summary>Enters (or, when thick liquid has come back, leaves) the dry front stage; true while in it.</summary>
+            public bool UpdateDryFront()
+            {
+                float max = 0f;
+                using (Scope())
+                {
+                    foreach (int c in standMemory)
+                    {
+                        if (SmartMopTargets.IsStandable(c))
+                        {
+                            max = Mathf.Max(max, SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick));
+                        }
+                    }
+                }
+                if (!dryFront && max <= DryFrontKg)
+                {
+                    dryFront = true;
+                    EnterSweep();
+                    Debug.Log("[TrueSmartMopping] dry front stage (richest range " + max.ToString("F1") + " kg)");
+                }
+                else if (dryFront && max > DryFrontLeaveKg)
+                {
+                    dryFront = false;
+                    dryFrontPlaced = false;
+                }
+                return dryFront;
+            }
+
+            /// <summary>
+            /// The stand for the dry front: second cell from the end of the liquid nearest to <paramref name="from"/>, so the
+            /// range covers the end cell; a stand whose range would overlap another order's range is only taken as a last resort.
+            /// The current stand is a valid answer (its range is not dry yet).
+            /// </summary>
+            private int FindEdgeStand(int from)
+            {
+                using var scope = Scope();
+                int minCol = int.MaxValue, maxCol = int.MinValue;
+                foreach (int c in standMemory)
+                {
+                    if (SmartMopTargets.IsMoppable(c, element, MopTool.maxMopAmt))
+                    {
+                        int col = Grid.CellColumn(c);
+                        minCol = Mathf.Min(minCol, col);
+                        maxCol = Mathf.Max(maxCol, col);
+                    }
+                }
+                if (minCol == int.MaxValue)
+                {
+                    return Grid.InvalidCell;
+                }
+                int fromCol = Grid.IsValidCell(from) ? Grid.CellColumn(from) : (minCol + maxCol) / 2;
+                bool leftEnd = Mathf.Abs(fromCol - minCol) <= Mathf.Abs(fromCol - maxCol);
+                int wanted = maxCol - minCol >= 2 ? (leftEnd ? minCol + 1 : maxCol - 1) : (minCol + maxCol) / 2;
+                int best = Grid.InvalidCell;
+                int bestKey = int.MaxValue;
+                foreach (int c in standMemory)
+                {
+                    if (!SmartMopTargets.IsStandable(c) || Blocked(c))
+                    {
+                        continue;
+                    }
+                    if (SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick) <= 0f)
+                    {
+                        continue;
+                    }
+                    int col = Grid.CellColumn(c);
+                    int key = (OverlapsOtherRange(c) ? 1000000 : 0) + Mathf.Abs(col - wanted) * 1000
+                        + (Grid.IsValidCell(from) ? Mathf.Abs(col - fromCol) + Mathf.Abs(Grid.CellRow(c) - Grid.CellRow(from)) : 0);
+                    if (key < bestKey)
+                    {
+                        bestKey = key;
+                        best = c;
+                    }
+                }
+                return best;
+            }
+
+            // Marching direction along the row in the dry front stage: +1 right, -1 left, 0 not chosen yet.
+            private int marchDirection;
+            public const int MarchMinTicks = 2;
+            public const float MarchLeaveKg = 1f;
+
+            /// <summary>
+            /// Dry front, thin liquid: a range is emptied in one or two work ticks and what flows in afterwards is a trickle not
+            /// worth waiting for. True when the order should move on to the next range.
+            /// </summary>
+            public bool MarchShouldLeave()
+            {
+                if (!dryFront || mopTicks < MarchMinTicks)
+                {
+                    return false;
+                }
+                using var scope = Scope();
+                return SmartMopTargets.WindowPotential(targetCell, element, MopTool.maxMopAmt, MopAmountPerTick) < MarchLeaveKg;
+            }
+
+            /// <summary>
+            /// The next stand of the march: the range right after the current one in the marching direction (skipping dry cells),
+            /// turning round at the end of the liquid. Passes repeat until nothing is left.
+            /// </summary>
+            private int FindMarchStand(int from)
+            {
+                using var scope = Scope();
+                if (!Grid.IsValidCell(from))
+                {
+                    return FindEdgeStand(from);
+                }
+                int row = Grid.CellRow(from);
+                int fromCol = Grid.CellColumn(from);
+                var liquid = new HashSet<int>();
+                int minCol = int.MaxValue, maxCol = int.MinValue;
+                foreach (int c in standMemory)
+                {
+                    if (SmartMopTargets.IsMoppable(c, element, MopTool.maxMopAmt))
+                    {
+                        int col = Grid.CellColumn(c);
+                        liquid.Add(col);
+                        minCol = Mathf.Min(minCol, col);
+                        maxCol = Mathf.Max(maxCol, col);
+                    }
+                }
+                if (liquid.Count == 0)
+                {
+                    return Grid.InvalidCell;
+                }
+                if (marchDirection == 0)
+                {
+                    marchDirection = Mathf.Abs(fromCol - minCol) <= Mathf.Abs(fromCol - maxCol) ? 1 : -1;
+                }
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    // first liquid column beyond the current range, in the marching direction
+                    int first = int.MaxValue;
+                    foreach (int col in liquid)
+                    {
+                        int ahead = (col - fromCol) * marchDirection;
+                        if (ahead >= 2 && ahead < first)
+                        {
+                            first = ahead;
+                        }
+                    }
+                    if (first != int.MaxValue)
+                    {
+                        int wanted = fromCol + (first + 1) * marchDirection;
+                        int best = Grid.InvalidCell;
+                        int bestKey = int.MaxValue;
+                        foreach (int c in standMemory)
+                        {
+                            if (!SmartMopTargets.IsStandable(c) || Blocked(c)
+                                || SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick) <= 0f)
+                            {
+                                continue;
+                            }
+                            int col = Grid.CellColumn(c);
+                            if ((col - fromCol) * marchDirection < 1)
+                            {
+                                continue;
+                            }
+                            int key = (OverlapsOtherRange(c) ? 100000 : 0) + Mathf.Abs(col - wanted) * 100 + Mathf.Abs(Grid.CellRow(c) - row);
+                            if (key < bestKey)
+                            {
+                                bestKey = key;
+                                best = c;
+                            }
+                        }
+                        if (best != Grid.InvalidCell)
+                        {
+                            return best;
+                        }
+                    }
+                    marchDirection = -marchDirection; // end of the liquid: turn round
+                }
+                // nothing ahead either way: only the current range (or one overlapping it) still holds liquid
+                return FindEdgeStand(from);
+            }
+
+            // True when the 3-wide range of this stand shares a cell with the range of another order's stand.
+            private bool OverlapsOtherRange(int cell)
+            {
+                foreach (var claim in Claims)
+                {
+                    if (claim.Value != this && Grid.CellRow(claim.Key) == Grid.CellRow(cell)
+                        && Mathf.Abs(Grid.CellColumn(claim.Key) - Grid.CellColumn(cell)) <= 2)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            public const float NearBonus = 1f;
+
+            // Score factor for standing next to another order: far from it while the window is rich, close to it (side by side,
+            // so the one at the edge finishes quickly and they leapfrog, as with vanilla placers) in the thin tail.
+            private float NearFactor(int cell, float potential)
+            {
+                if (!NearOther(cell))
+                {
+                    return 1f;
+                }
+                return potential >= NearPenaltyMinKg ? 0.1f : NearBonus;
+            }
+
+            public const float NearPenaltyMinKg = 20f;
+            public const int MaxHelpers = 2;
+            public const float HelperMinKg = 5f;
+            public const float HelperCheckSeconds = 1f;
+            public bool isHelper;
+            private readonly List<SmartMopChore> helpers = new List<SmartMopChore>();
+            private float nextHelperCheck;
+
+            /// <summary>Hands out one more order when a rich stand is free; at most one unstarted helper at a time.</summary>
+            public void TrySpawnHelper()
+            {
+                if (isHelper || !master.manual || mopTicks < 5 || Time.time < nextHelperCheck || targetCell == Grid.InvalidCell)
+                {
+                    return;
+                }
+                nextHelperCheck = Time.time + HelperCheckSeconds;
+                helpers.RemoveAll(h => h.done);
+                if (helpers.Count >= MaxHelpers || helpers.Exists(h => h.smi.WorkerObject == null))
+                {
+                    return;
+                }
+                int best = Grid.InvalidCell;
+                float bestKg = HelperMinKg;
+                using (Scope())
+                {
+                    foreach (int c in standMemory)
+                    {
+                        if (!SmartMopTargets.IsStandable(c) || Blocked(c) || TooCloseToAnyOrder(c))
+                        {
+                            continue;
+                        }
+                        float p = SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick);
+                        if (NearOther(c) && p >= NearPenaltyMinKg)
+                        {
+                            continue;
+                        }
+                        if (p > bestKg)
+                        {
+                            bestKg = p;
+                            best = c;
+                        }
+                    }
+                }
+                if (best == Grid.InvalidCell)
+                {
+                    return;
+                }
+                var prioritizable = master.gameObject.GetComponent<Prioritizable>();
+                var saved = new Saved
+                {
+                    targetCell = best,
+                    element = element,
+                    remembered = new List<int>(remembered).ToArray(),
+                    memory = new List<int>(standMemory).ToArray(),
+                };
+                var priority = prioritizable != null ? prioritizable.GetMasterPriority() : new PrioritySetting(PriorityScreen.PriorityClass.basic, 5);
+                var helper = SmartMopTool.CreateOrderChore(best, priority, saved);
+                if (helper != null)
+                {
+                    helper.smi.isHelper = true;
+                    helper.smi.sweep = sweep;
+                    helpers.Add(helper);
+                    Debug.Log("[TrueSmartMopping] helper order at " + best + " (" + bestKg.ToString("F0") + " kg/tick)");
+                }
+            }
+
+            // Another order's stand within reach of this window (the 3-wide ranges would overlap).
+            private bool TooCloseToAnyOrder(int cell)
+            {
+                foreach (int claimed in Claims.Keys)
+                {
+                    if (Grid.CellRow(claimed) == Grid.CellRow(cell) && Mathf.Abs(Grid.CellColumn(claimed) - Grid.CellColumn(cell)) <= 1)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // Reposition bookkeeping: separate from the step budget, which only counts "go to the next liquid" moves.
+            public const int RepositionWaitTicks = 2;
+            public const int MaxRepositions = 200;
+            // The low-yield jump only goes to a neighbouring window (one 3-wide range away); farther liquid is reached once the
+            // current range is empty. Long jumps made the duplicant circle around liquid that kept flowing back.
+            public const int RichMaxDistance = 3;
+            public const float LowYieldKg = 5f;
+            public const float RichFactor = 2f;
+            public const float RichMinGainKg = 4f;
+            private int repositions;
+            private int pendingStand = Grid.InvalidCell;
+            private int pendingTicks;
+            /// <summary>
+            /// The standing cell with the best value of (mass removable per work tick) / (distance from <paramref name="from"/> + 3),
+            /// skipping blocked cells and <paramref name="exclude"/>; cells next to another order count a tenth.
+            /// </summary>
+            private int FindRichStand(int from, int exclude, out float potential, Navigator nav = null, int maxDistance = int.MaxValue)
+            {
+                potential = 0f;
+                int best = Grid.InvalidCell;
+                float bestScore = 0f;
+                var top = nav != null ? new List<KeyValuePair<float, int>>() : null;
+                var cells = standMemory.Count > 0 ? standMemory : remembered;
+                foreach (int c in cells)
+                {
+                    if (c == exclude || !SmartMopTargets.IsStandable(c) || Blocked(c))
+                    {
+                        continue;
+                    }
+                    float p = SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick);
+                    if (p <= 0f)
+                    {
+                        continue;
+                    }
+                    if (maxDistance != int.MaxValue && Grid.IsValidCell(from)
+                        && Mathf.Abs(Grid.CellColumn(c) - Grid.CellColumn(from)) + Mathf.Abs(Grid.CellRow(c) - Grid.CellRow(from)) > maxDistance)
+                    {
+                        continue;
+                    }
+                    int dist = Grid.IsValidCell(from)
+                        ? Mathf.Abs(Grid.CellColumn(c) - Grid.CellColumn(from)) + Mathf.Abs(Grid.CellRow(c) - Grid.CellRow(from))
+                        : 0;
+                    float score = p / (dist + 3f) * NearFactor(c, p);
+                    top?.Add(new KeyValuePair<float, int>(score, c));
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = c;
+                        potential = p;
+                    }
+                }
+                if (top != null && top.Count > 1)
+                {
+                    // Re-rank the best few by the real walking cost: a stand on the far side of a wall or a deep pool can be
+                    // close in a straight line and far (or unreachable) on foot.
+                    top.Sort((a, b) => b.Key.CompareTo(a.Key));
+                    bestScore = 0f;
+                    best = Grid.InvalidCell;
+                    for (int i = 0; i < top.Count && (i < RerankCount || (best == Grid.InvalidCell && i < 3 * RerankCount)); i++)
+                    {
+                        int c = top[i].Value;
+                        int cost = nav.GetNavigationCost(c);
+                        if (cost < 0)
+                        {
+                            continue;
+                        }
+                        float p = SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick);
+                        float score = p / (cost / NavCostPerCell + 3f) * NearFactor(c, p);
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = c;
+                            potential = p;
+                        }
+                    }
+                }
+                return best;
+            }
+
+            // Navigator costs are about 10 per cell walked.
+            public const int RerankCount = 4;
+            public const float NavCostPerCell = 10f;
 
             public int moveWaitTicks;
 
@@ -428,33 +918,35 @@ namespace TrueSmartMopping
                     return false;
                 }
                 int own = Grid.PosToCell(WorkerObject.transform.GetPosition());
-                int found = Grid.InvalidCell;
-                int bestScore = int.MaxValue;
-                foreach (int c in remembered)
+                float potential;
+                if (UpdateDryFront())
                 {
-                    if (!SmartMopTargets.IsMoppable(c, element, MopTool.maxMopAmt))
+                    int edge = FindMarchStand(own);
+                    if (edge != Grid.InvalidCell)
                     {
-                        continue;
-                    }
-                    int score = Mathf.Abs(Grid.CellColumn(c) - Grid.CellColumn(own)) + Mathf.Abs(Grid.CellRow(c) - Grid.CellRow(own))
-                        + (NearOther(c) ? 1000 : 0);
-                    if (score < bestScore)
-                    {
-                        bestScore = score;
-                        found = c;
+                        steps++;
+                        Debug.Log("[TrueSmartMopping] dry front: " + targetCell + " -> " + edge);
+                        next = edge;
+                        return true;
                     }
                 }
-                if (found == Grid.InvalidCell)
+                using (Scope())
                 {
-                    return false;
+                    next = FindRichStand(own, Grid.InvalidCell, out potential, WorkerObject.GetComponent<Navigator>());
                 }
-                next = SmartMopTargets.FindPreferredStand(found, own, element, MopTool.maxMopAmt, Blocked, NearOther, own, standMemory);
+                if (next == Grid.InvalidCell && EnterSweep())
+                {
+                    using (Scope())
+                    {
+                        next = FindRichStand(own, Grid.InvalidCell, out potential, WorkerObject.GetComponent<Navigator>());
+                    }
+                }
                 if (next == Grid.InvalidCell)
                 {
                     return false;
                 }
                 steps++;
-                Debug.Log("[TrueSmartMopping] next target: " + targetCell + " -> " + next);
+                Debug.Log("[TrueSmartMopping] next target: " + targetCell + " -> " + next + " (" + potential.ToString("F0") + " kg/tick)");
                 return true;
             }
         }
@@ -479,10 +971,14 @@ namespace TrueSmartMopping
                     {
                         return;
                     }
-                    if (smi.IsExhausted())
+                    if (smi.CheckFinished())
                     {
                         smi.GoTo(finished);
                         return;
+                    }
+                    if (smi.GetCurrentState() == mopping)
+                    {
+                        smi.TrySpawnHelper();
                     }
                     // The order switches to the better cell immediately; a duplicant that is mopping follows after a short wait.
                     if (smi.TryReposition() && smi.GetCurrentState() == moveToTarget)
@@ -544,12 +1040,12 @@ namespace TrueSmartMopping
                         else if (smi.WindowCount() == 0)
                         {
                             // Vanilla keeps working for a moment after the liquid is gone; pretend to mop before moving on.
-                            if (++smi.idleTicks >= IdleTicksBeforeNext)
+                            if (++smi.idleTicks >= (smi.dryFront ? 1 : IdleTicksBeforeNext))
                             {
                                 smi.GoTo(chooseNext);
                             }
                         }
-                        else if (smi.mopTimer > 16f)
+                        else if (smi.mopTimer > 16f || smi.MarchShouldLeave())
                         {
                             smi.GoTo(chooseNext);
                         }

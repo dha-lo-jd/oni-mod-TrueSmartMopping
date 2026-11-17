@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
@@ -50,6 +50,11 @@ namespace TrueSmartMopping
 
         public static bool CreateOrder(int cell, PrioritySetting priority, SmartMopChore.Saved saved = null)
         {
+            return CreateOrderChore(cell, priority, saved) != null;
+        }
+
+        public static SmartMopChore CreateOrderChore(int cell, PrioritySetting priority, SmartMopChore.Saved saved = null)
+        {
             var placer = Assets.GetPrefab(new Tag("MopPlacer"));
             int stand;
             if (saved != null)
@@ -57,21 +62,21 @@ namespace TrueSmartMopping
                 stand = saved.targetCell;
                 if (!Grid.IsValidCell(stand))
                 {
-                    return false;
+                    return null;
                 }
             }
             else
             {
                 if (!Grid.IsValidCell(cell) || Grid.Solid[cell] || !Grid.Element[cell].IsLiquid)
                 {
-                    return false;
+                    return null;
                 }
                 var element = Grid.Element[cell].id;
                 stand = SmartMopTargets.FindStart(cell, element, MopTool.maxMopAmt, IsClaimed,
                     c => IsClaimed(c) || IsClaimed(Grid.CellLeft(c)) || IsClaimed(Grid.CellRight(c)));
                 if (stand == Grid.InvalidCell)
                 {
-                    return false;
+                    return null;
                 }
             }
             Debug.Log("[TrueSmartMopping] PlaceOrder click=" + cell + " stand=" + stand + " moppablesBefore=" + UnityEngine.Object.FindObjectsByType<Moppable>(FindObjectsSortMode.None).Length);
@@ -97,10 +102,10 @@ namespace TrueSmartMopping
                 {
                     go.DeleteObject();
                 }
-                return false;
+                return null;
             }
             prioritizable.SetMasterPriority(priority);
-            return true;
+            return chore;
         }
 
         internal static bool IsClaimed(int cell)

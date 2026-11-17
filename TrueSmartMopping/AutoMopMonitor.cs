@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace TrueSmartMopping;
 
@@ -16,6 +16,11 @@ public sealed class AutoMopMonitor : KMonoBehaviour
     private float nextCheckTime;
     private int suppressCell = Grid.InvalidCell;
     private float suppressUntil;
+    // After a stand search found nothing usable at a cell, do not search that cell again for a while: the search floods
+    // up to 4000 cells and would otherwise run twice a second for as long as the duplicant stands there.
+    private int noStandCell = Grid.InvalidCell;
+    private float noStandUntil;
+    private const float NoStandCooldownSeconds = 5f;
     private const float StaleChoreSeconds = 20f;
     private const float CheckIntervalSeconds = 0.5f;
 
@@ -122,7 +127,7 @@ public sealed class AutoMopMonitor : KMonoBehaviour
             Trace("invalid/solid cell");
             return;
         }
-        if (!Grid.Element[cell].IsLiquid || Grid.Mass[cell] <= 0f)
+        if (!Grid.Element[cell].IsLiquid || Grid.Mass[cell] <= SmartMopTargets.MinLiquidMass)
         {
             Trace("no liquid");
             return;
@@ -156,11 +161,20 @@ public sealed class AutoMopMonitor : KMonoBehaviour
             activeChore.smi.ReleaseClaim();
             activeChore = null;
         }
+        if (cell == noStandCell && Time.time < noStandUntil)
+        {
+            Trace("no usable stand cell (waiting)");
+            return;
+        }
         Trace("creating chore at cell " + cell);
         var chore = new SmartMopChore(this, provider, cell, PriorityScreen.PriorityClass.basic, ModSettings.AutoMopPriority);
         if (chore.smi.targetCell == Grid.InvalidCell)
         {
             Trace("no usable stand cell");
+            // Not yet on the provider: Cancel only runs the cleanup that drops it from SmartMopChore.Live.
+            chore.Cancel("No stand cell");
+            noStandCell = cell;
+            noStandUntil = Time.time + NoStandCooldownSeconds;
             return;
         }
         activeChore = chore;

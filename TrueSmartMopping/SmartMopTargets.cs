@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace TrueSmartMopping;
@@ -388,6 +388,65 @@ public static class SmartMopTargets
                && !Grid.Solid[cell]
                && Grid.Element[cell].IsLiquid
                && Grid.Element[cell].id == element
-               && Grid.Mass[cell] > 0f;
+               && Grid.Mass[cell] > MinMass;
+    }
+
+    /// <summary>
+    /// Liquid below this mass per cell (a thin film left by flowing liquid) counts as no liquid: it is neither chased nor
+    /// kept in the memory, so an order can finish.
+    /// </summary>
+    public const float MinLiquidMass = 0.5f;
+
+    /// <summary>
+    /// The mass limit in effect for the calls that follow (main thread only). A chore sets it with <see cref="Threshold"/>
+    /// for the duration of each of its own searches: the first pass ignores thin films, the sweep pass does not.
+    /// </summary>
+    public static float MinMass = MinLiquidMass;
+
+    public static ThresholdScope Threshold(float value)
+    {
+        return new ThresholdScope(value);
+    }
+
+    public readonly struct ThresholdScope : System.IDisposable
+    {
+        private readonly float previous;
+
+        public ThresholdScope(float value)
+        {
+            previous = MinMass;
+            MinMass = value;
+        }
+
+        public void Dispose()
+        {
+            MinMass = previous;
+        }
+    }
+
+    /// <summary>Mass the simulation can take from the 3-wide mop range centred on <paramref name="stand"/> in one work tick.</summary>
+    public static float WindowPotential(int stand, SimHashes element, float maxMopAmt, float perTick)
+    {
+        if (!Grid.IsValidCell(stand))
+        {
+            return 0f;
+        }
+
+        float sum = 0f;
+        foreach (int c in new[] { Grid.CellLeft(stand), stand, Grid.CellRight(stand) })
+        {
+            if (IsMoppable(c, element, maxMopAmt))
+            {
+                sum += System.Math.Min(Grid.Mass[c], perTick);
+            }
+        }
+
+        return sum;
+    }
+
+    /// <summary>A cell a duplicant can stand on to mop: not solid, solid floor below.</summary>
+    public static bool IsStandable(int cell)
+    {
+        return Grid.IsValidCell(cell) && !Grid.Solid[cell] && HasSolidBelow(cell);
     }
 }
