@@ -161,6 +161,15 @@ internal static class HarnessTests
                 Arrange.SetElement(Arrange.Cell(ax + x + i, ay + r), SimHashes.Water, mass, 293.15f);
     }
 
+    private static int CountPlacers()
+    {
+        int n = 0;
+        for (int y = 0; y < InnerHeight; y++)
+            for (int x = 0; x < aw; x++)
+                if (Grid.Objects[Arrange.Cell(ax + x, ay + y), 8] != null) n++;
+        return n;
+    }
+
     // Vanilla placers on every liquid cell that MopTool.OnDragTool would accept right now.
     private static int PlaceVanillaMops()
     {
@@ -195,7 +204,25 @@ internal static class HarnessTests
         yield return BuildArena(puddleWidth + 8);
         int px = 4;
         Puddle(px, puddleWidth, 1, massPerCell);
-        yield return Wait.Ticks(2);
+        // Let the liquid spread over the whole floor and settle before anybody is ordered to mop (as a puddle found in
+        // play): otherwise a drag made at once misses the cells the liquid has not reached yet.
+        float settleS = 0f;
+        var last = new float[aw];
+        for (; settleS < 60f; settleS += 1f)
+        {
+            yield return Wait.Seconds(1f);
+            bool covered = true;
+            float change = 0f;
+            for (int xx = 0; xx < aw; xx++)
+            {
+                int cc = Arrange.Cell(ax + xx, ay);
+                float mass = Grid.Element[cc].IsLiquid ? Grid.Mass[cc] : 0f;
+                if (mass <= 0f) covered = false;
+                change = Mathf.Max(change, Mathf.Abs(mass - last[xx]));
+                last[xx] = mass;
+            }
+            if (covered && change < 0.5f) break;
+        }
         float before = LiquidMass();
         var dupes = new List<GameObject>();
         for (int i = 0; i < dupeCount; i++)
@@ -223,6 +250,8 @@ internal static class HarnessTests
         var sw = Stopwatch.StartNew();
         float cur = before;
         int s = 0;
+        int redrags = 0, idlePlacerless = 0;
+        string stop = "timeout"; // why the measurement ended
         for (; s < 300; s++)
         {
             for (int sub = 0; sub < 5; sub++)
@@ -308,9 +337,23 @@ internal static class HarnessTests
             if (cur <= 0.001f && !marks.ContainsKey("t_clean")) marks["t_clean"] = t; // really nothing left
             // vanilla2 = the player drags again every 5 s; vanilla15 / vanilla30 = every 15 / 30 s; vanilla1 = never.
             int redrag = mode == "vanilla2" ? 5 : mode == "vanilla15" ? 15 : mode == "vanilla30" ? 30 : 0;
-            if (redrag > 0 && s % redrag == redrag - 1) PlaceVanillaMops();
-            // smart: wait until every order (helpers too) has ended, whatever is left
-            if (mode == "smart" ? SmartMopChore.Live.Count == 0 : cur <= 0.05f) break;
+            if (redrag > 0 && s % redrag == redrag - 1 && PlaceVanillaMops() > 0) redrags++;
+            if (mode == "smart")
+            {
+                // smart: wait until every order (helpers too) has ended, whatever is left
+                if (SmartMopChore.Live.Count == 0) { stop = "orders_done"; break; }
+                continue;
+            }
+            if (cur <= 0.001f) { stop = "clean"; break; } // vanilla: until really nothing is left
+            int open = CountPlacers();
+            if (open == 0)
+            {
+                // vanillaidle = the player drags again only once every mop errand is gone and liquid is still left
+                if (mode == "vanillaidle" && PlaceVanillaMops() > 0) redrags++;
+                // nobody will mop again (no placer, no redrag coming soon): stop after 10 s
+                else if (++idlePlacerless >= 10 && redrag == 0) { stop = "no_errand_left_unfinished"; break; }
+            }
+            else idlePlacerless = 0;
         }
         yield return Wait.Seconds(2f);
         cur = LiquidMass();
@@ -321,7 +364,7 @@ internal static class HarnessTests
         int stride = SmartMopChore.StatesInstance.RelayStride;
         SmartMopChore.StatesInstance.RelayStride = SmartMopChore.StatesInstance.DefaultRelayStride;
         Log(name + " quiet=" + quiet + " react_s=" + (reactSamples * 0.2f).ToString("F1") + " stride=" + stride + " gas=" + gas + " mode=" + mode + " width=" + puddleWidth + " dupes=" + dupeCount + " " + m + " residue_kg=" + cur.ToString("F2") + "/" + before.ToString("F0") + extra
-            + " sim_s=" + s + " real_s=" + sw.Elapsed.TotalSeconds.ToString("F1"));
+            + " settle_s=" + settleS.ToString("F0") + " stop=" + stop + " finished=" + (cur <= 0.001f) + " redrags=" + redrags + " placers_left=" + CountPlacers() + " sim_s=" + s + " real_s=" + sw.Elapsed.TotalSeconds.ToString("F1"));
         foreach (var d in dupes) QuietTestDuplicants.Dupes.Remove(d);
         foreach (var d in dupes) Arrange.Destroy(d);
         ModSettings.AutoMopEnabled = true;
@@ -437,6 +480,43 @@ internal static class HarnessTests
 
     [HarnessTest(Name = "tsmcmp.d2_vanilla2_noisy", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
     public static IEnumerator Cmp_d2_vanilla2_noisy() => FlatScenario("cmp_25", "vanilla2", 25, 2, 40f, "air", 0, false);
+
+    // Vanilla, the player drags again only once every mop errand is gone and liquid is still left (vs every 5 s / never).
+    [HarnessTest(Name = "tsmvidle.d1_idle", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d1_idle() => FlatScenario("vidle_25", "vanillaidle", 25, 1, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d1_every5", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d1_every5() => FlatScenario("vidle_25", "vanilla2", 25, 1, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d1_once", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d1_once() => FlatScenario("vidle_25", "vanilla1", 25, 1, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d2_idle", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d2_idle() => FlatScenario("vidle_25", "vanillaidle", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d2_every5", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d2_every5() => FlatScenario("vidle_25", "vanilla2", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d2_once", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d2_once() => FlatScenario("vidle_25", "vanilla1", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d3_idle", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d3_idle() => FlatScenario("vidle_25", "vanillaidle", 25, 3, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d1_smart", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d1_smart() => FlatScenario("vidle_25", "smart", 25, 1, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d2_smart", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d2_smart() => FlatScenario("vidle_25", "smart", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d3_smart", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d3_smart() => FlatScenario("vidle_25", "smart", 25, 3, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d3_once", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d3_once() => FlatScenario("vidle_25", "vanilla1", 25, 3, 40f);
+
+    [HarnessTest(Name = "tsmvidle.d3_every5", Tags = "tsmvidle manual", TimeoutSeconds = 900)]
+    public static IEnumerator VIdle_d3_every5() => FlatScenario("vidle_25", "vanilla2", 25, 3, 40f);
 
     // CPU cost of the stand search itself (cold = rebuilds the memory, warm = reuses it) on a 3-row puddle.
     [HarnessTest(Name = "tsmbench.search_cost", Tags = "tsmbench manual", TimeoutSeconds = 300)]

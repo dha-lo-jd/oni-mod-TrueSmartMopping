@@ -285,7 +285,7 @@ namespace TrueSmartMopping
                     return false;
                 }
                 var o = Grid.Objects[cell, 8];
-                return o != null && o != master.gameObject && !(relay && IsGroupMarker(o));
+                return o != null && o != master.gameObject && !IsFreeGroupMarker(o);
             }
 
             /// <summary>Cell of the assigned worker; for a new automatic order, the starting cell (the duplicant's own).</summary>
@@ -348,9 +348,10 @@ namespace TrueSmartMopping
 
             private bool ClaimedByOther(int cell)
             {
-                // During the relay an unstarted helper of the group only marks where the next duplicant will go.
+                // An unstarted helper of the group only marks where the next duplicant will go; until one takes it, the
+                // duplicants of the group may stand there (alone, nobody else ever comes and the cell must not stay skipped).
                 return Grid.IsValidCell(cell) && Claims.TryGetValue(cell, out var o) && o != this
-                    && !(relay && o.Leader == Leader && o.WorkerObject == null);
+                    && !(o.Leader == Leader && o.WorkerObject == null);
             }
 
             public void ReleaseClaim()
@@ -873,6 +874,20 @@ namespace TrueSmartMopping
                     if (m.master.gameObject == go)
                     {
                         return true;
+                    }
+                }
+                return false;
+            }
+
+            // Markers that do not keep the duplicants of this group off a cell: during the relay every marker of the group,
+            // otherwise those of helpers nobody has taken yet (alone, nobody else ever comes and the cell must not stay skipped).
+            private bool IsFreeGroupMarker(GameObject go)
+            {
+                foreach (var m in Group())
+                {
+                    if (m.master.gameObject == go)
+                    {
+                        return relay || m.WorkerObject == null;
                     }
                 }
                 return false;
