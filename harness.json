@@ -1,0 +1,5 @@
+{
+  "build": ["dotnet build TrueSmartMopping.sln -v q -p:ModInstallPath=F:/_System/Documents/Klei/OxygenNotIncluded/mods/local/TrueSmartMopping"],
+  "required_mods": ["TrueSmartMopping.Local"],
+  "save": "05 all research.sav"
+}
