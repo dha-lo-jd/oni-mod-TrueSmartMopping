@@ -236,6 +236,20 @@ internal static class HarnessTests
                     var dr = d.GetComponent<ChoreDriver>();
                     var ch = dr != null ? dr.GetCurrentChore() : null;
                     sb.Append(" | ").Append(dx - ax).Append(',').Append(dy - ay).Append(',').Append(ch != null ? ch.choreType.Id : "none");
+                    if (ch is SmartMopChore smc)
+                    {
+                        var st = smc.smi.GetCurrentState();
+                        var nav = d.GetComponent<Navigator>();
+                        sb.Append(',').Append(st != null ? st.name : "-").Append(',').Append(nav != null && nav.IsMoving() ? "nav" : "still");
+                        var fx = d.GetComponent<Klei.AI.Effects>();
+                        if (fx != null && fx.HasEffect("Greeting")) sb.Append(",greeting");
+                        var kac = d.GetComponent<KBatchedAnimController>();
+                        if (kac != null) sb.Append(",anim=").Append(kac.currentAnim.ToString());
+                        if (kac != null && kac.currentAnim == (HashedString)"react" && fx != null)
+                            foreach (var ei in fx.GetTimeLimitedEffects()) sb.Append(",fx=").Append(ei.effect.Id).Append(ei.effect.emoteAnim != null || ei.effect.emote != null ? "*" : "");
+                        var navc = d.GetComponent<Navigator>();
+                        if (navc != null && navc.IsMoving()) sb.Append(",tr=").Append(navc.GetNextTransition().anim.ToString());
+                    }
                 }
                 sb.Append(" | liquid=").Append(LiquidMass().ToString("F2"));
                 UnityEngine.Debug.Log(sb.ToString());

@@ -801,6 +801,70 @@ namespace TrueSmartMopping
                 return best;
             }
 
+            /// <summary>
+            /// The rearmost duplicant of the relay first takes what has spread behind its range (towards the end the relay
+            /// started from: a thin film keeps creeping outwards there). Left alone it is the last thing left, and everybody walks
+            /// back the whole length for a few grams. Invalid when nothing is behind, or another duplicant stands further back.
+            /// </summary>
+            private int RearCleanupStand()
+            {
+                int dir = Leader.relayDir;
+                if (dir == 0 || !Grid.IsValidCell(targetCell))
+                {
+                    return Grid.InvalidCell;
+                }
+                int my = Grid.CellColumn(targetCell);
+                foreach (var m in Group())
+                {
+                    if (m == this || m.master.done || m.WorkerObject == null || !m.relayPlaced || !Grid.IsValidCell(m.targetCell))
+                    {
+                        continue;
+                    }
+                    if ((Grid.CellColumn(m.targetCell) - my) * dir < 0)
+                    {
+                        return Grid.InvalidCell;
+                    }
+                }
+                using var scope = Scope();
+                bool found = false;
+                int rear = 0;
+                foreach (int c in standMemory)
+                {
+                    int col = Grid.CellColumn(c);
+                    if ((col - my) * dir <= -2 && SmartMopTargets.IsMoppable(c, element, MopTool.maxMopAmt))
+                    {
+                        if (!found || col * dir < rear * dir)
+                        {
+                            rear = col;
+                        }
+                        found = true;
+                    }
+                }
+                if (!found)
+                {
+                    return Grid.InvalidCell;
+                }
+                int wanted = rear + dir;
+                int row = Grid.CellRow(targetCell);
+                int best = Grid.InvalidCell;
+                int bestKey = int.MaxValue;
+                foreach (int c in standMemory)
+                {
+                    if (!SmartMopTargets.IsStandable(c) || Blocked(c)
+                        || SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick) <= 0f)
+                    {
+                        continue;
+                    }
+                    int key = Mathf.Abs(Grid.CellColumn(c) - wanted) * 100 + Mathf.Abs(Grid.CellRow(c) - row);
+                    if (key < bestKey)
+                    {
+                        bestKey = key;
+                        best = c;
+                    }
+                }
+                return best;
+            }
+
             // True for the marker (chore master) of an order of this group.
             private bool IsGroupMarker(GameObject go)
             {
@@ -1165,11 +1229,16 @@ namespace TrueSmartMopping
                 float potential;
                 if (relay)
                 {
-                    int stand = RelayStand(true);
+                    int stand = RearCleanupStand();
+                    bool behind = stand != Grid.InvalidCell;
+                    if (!behind)
+                    {
+                        stand = RelayStand(true);
+                    }
                     if (stand != Grid.InvalidCell)
                     {
                         steps++;
-                        Debug.Log("[TrueSmartMopping] relay: " + targetCell + " -> " + stand);
+                        Debug.Log("[TrueSmartMopping] relay: " + targetCell + " -> " + stand + (behind ? " (behind)" : ""));
                         next = stand;
                         return true;
                     }
