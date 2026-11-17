@@ -187,8 +187,9 @@ internal static class HarnessTests
 
     // mode: "smart" = one smart-mop order; "vanilla1" = vanilla placers dragged once over the puddle; "vanilla2" = the player
     // drags again every 5 s (new films get new placers). Duplicants start at the left end of the room.
-    private static IEnumerator FlatScenario(string name, string mode, int puddleWidth, int dupeCount, float massPerCell, string gas = "air")
+    private static IEnumerator FlatScenario(string name, string mode, int puddleWidth, int dupeCount, float massPerCell, string gas = "air", int relay = 0)
     {
+        if (relay > 0) SmartMopChore.StatesInstance.RelayStride = relay;
         gasKind = gas;
         ModSettings.AutoMopEnabled = false;
         yield return BuildArena(puddleWidth + 8);
@@ -283,8 +284,12 @@ internal static class HarnessTests
             foreach (var f in new[] { 0.5f, 0.9f, 0.99f })
                 if (removed >= f * before && !marks.ContainsKey("t" + (int)(f * 100))) marks["t" + (int)(f * 100)] = t;
             if (cur <= 0.05f && !marks.ContainsKey("t_zero")) marks["t_zero"] = t;
-            if (mode == "vanilla2" && s % 5 == 4) PlaceVanillaMops();
-            if (cur <= 0.05f && (chore == null || chore.done)) break;
+            if (cur <= 0.001f && !marks.ContainsKey("t_clean")) marks["t_clean"] = t; // really nothing left
+            // vanilla2 = the player drags again every 5 s; vanilla15 / vanilla30 = every 15 / 30 s; vanilla1 = never.
+            int redrag = mode == "vanilla2" ? 5 : mode == "vanilla15" ? 15 : mode == "vanilla30" ? 30 : 0;
+            if (redrag > 0 && s % redrag == redrag - 1) PlaceVanillaMops();
+            // smart: wait until every order (helpers too) has ended, whatever is left
+            if (mode == "smart" ? SmartMopChore.Live.Count == 0 : cur <= 0.05f) break;
         }
         yield return Wait.Seconds(2f);
         cur = LiquidMass();
@@ -292,13 +297,15 @@ internal static class HarnessTests
         string extra = chore != null
             ? " done=" + chore.done + " moves=" + chore.smi.moves + " moveTime=" + chore.smi.moveTime.ToString("F1") + " mopTime=" + chore.smi.mopTime.ToString("F1")
             : "";
-        Log(name + " gas=" + gas + " mode=" + mode + " width=" + puddleWidth + " dupes=" + dupeCount + " " + m + " residue_kg=" + cur.ToString("F2") + "/" + before.ToString("F0") + extra
+        int stride = SmartMopChore.StatesInstance.RelayStride;
+        SmartMopChore.StatesInstance.RelayStride = SmartMopChore.StatesInstance.DefaultRelayStride;
+        Log(name + " stride=" + stride + " gas=" + gas + " mode=" + mode + " width=" + puddleWidth + " dupes=" + dupeCount + " " + m + " residue_kg=" + cur.ToString("F2") + "/" + before.ToString("F0") + extra
             + " sim_s=" + s + " real_s=" + sw.Elapsed.TotalSeconds.ToString("F1"));
         foreach (var d in dupes) Arrange.Destroy(d);
         ModSettings.AutoMopEnabled = true;
         gasKind = "air";
         yield return null;
-        if (mode == "smart") Check.True(cur <= 0.1f, "liquid was left: " + cur.ToString("F2") + " kg");
+        if (mode == "smart") Check.True(cur <= 0.005f, "liquid was left: " + cur.ToString("F3") + " kg");
     }
 
     [HarnessTest(Name = "tsmbench.flat_9", Tags = "tsmbench manual", TimeoutSeconds = 900)]
@@ -354,6 +361,53 @@ internal static class HarnessTests
 
     [HarnessTest(Name = "tsmgas.vacuum_25_vanilla2", Tags = "tsmgas manual", TimeoutSeconds = 900)]
     public static IEnumerator Gas_vacuum_25_vanilla2() => FlatScenario("flat_25", "vanilla2", 25, 1, 40f, "vacuum");
+
+    // Comparison review: several duplicants, and how often the player drags the vanilla tool again.
+    [HarnessTest(Name = "tsmcmp.d2_smart", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_smart() => FlatScenario("cmp_25", "smart", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d2_vanilla1", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_vanilla1() => FlatScenario("cmp_25", "vanilla1", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d2_vanilla2", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_vanilla2() => FlatScenario("cmp_25", "vanilla2", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d2_vanilla15", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_vanilla15() => FlatScenario("cmp_25", "vanilla15", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d2_vanilla30", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_vanilla30() => FlatScenario("cmp_25", "vanilla30", 25, 2, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d3_smart", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d3_smart() => FlatScenario("cmp_25", "smart", 25, 3, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d3_vanilla1", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d3_vanilla1() => FlatScenario("cmp_25", "vanilla1", 25, 3, 40f);
+
+    [HarnessTest(Name = "tsmcmp.d3_vanilla2", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d3_vanilla2() => FlatScenario("cmp_25", "vanilla2", 25, 3, 40f);
+
+    // Relay with other strides (columns between neighbours: 1 = side by side, 2 = one cell between, the default).
+    [HarnessTest(Name = "tsmrelay.d2_s1", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_d2_s1() => FlatScenario("relay_25", "smart", 25, 2, 40f, "air", 1);
+
+    [HarnessTest(Name = "tsmrelay.d2_s2", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_d2_s2() => FlatScenario("relay_25", "smart", 25, 2, 40f, "air", 2);
+
+    [HarnessTest(Name = "tsmrelay.d2_s3", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_d2_s3() => FlatScenario("relay_25", "smart", 25, 2, 40f, "air", 3);
+
+    [HarnessTest(Name = "tsmrelay.d3_s1", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_d3_s1() => FlatScenario("relay_25", "smart", 25, 3, 40f, "air", 1);
+
+    [HarnessTest(Name = "tsmrelay.d3_s2", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_d3_s2() => FlatScenario("relay_25", "smart", 25, 3, 40f, "air", 2);
+
+    [HarnessTest(Name = "tsmrelay.d3_s3", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_d3_s3() => FlatScenario("relay_25", "smart", 25, 3, 40f, "air", 3);
+
+    [HarnessTest(Name = "tsmrelay.thick_d2_s2", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
+    public static IEnumerator Relay_thick_d2_s2() => FlatScenario("relay_25_thick", "smart", 25, 2, 140f, "air", 2);
 
     // CPU cost of the stand search itself (cold = rebuilds the memory, warm = reuses it) on a 3-row puddle.
     [HarnessTest(Name = "tsmbench.search_cost", Tags = "tsmbench manual", TimeoutSeconds = 300)]

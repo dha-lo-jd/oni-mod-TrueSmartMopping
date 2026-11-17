@@ -280,7 +280,12 @@ namespace TrueSmartMopping
 
             private bool HasOtherObject(int cell)
             {
-                return Grid.IsValidCell(cell) && Grid.Objects[cell, 8] != null && Grid.Objects[cell, 8] != master.gameObject;
+                if (!Grid.IsValidCell(cell))
+                {
+                    return false;
+                }
+                var o = Grid.Objects[cell, 8];
+                return o != null && o != master.gameObject && !(relay && IsGroupMarker(o));
             }
 
             /// <summary>Cell of the assigned worker; for a new automatic order, the starting cell (the duplicant's own).</summary>
@@ -343,7 +348,9 @@ namespace TrueSmartMopping
 
             private bool ClaimedByOther(int cell)
             {
-                return Grid.IsValidCell(cell) && Claims.TryGetValue(cell, out var o) && o != this;
+                // During the relay an unstarted helper of the group only marks where the next duplicant will go.
+                return Grid.IsValidCell(cell) && Claims.TryGetValue(cell, out var o) && o != this
+                    && !(relay && o.Leader == Leader && o.WorkerObject == null);
             }
 
             public void ReleaseClaim()
@@ -407,6 +414,34 @@ namespace TrueSmartMopping
                 using var scope = Scope();
                 if (targetCell == Grid.InvalidCell || repositions >= MaxRepositions)
                 {
+                    return false;
+                }
+                if (relay)
+                {
+                    pendingStand = Grid.InvalidCell;
+                    pendingTicks = 0;
+                    if (!sweep)
+                    {
+                        EnterSweep();
+                    }
+                    // keeps the stand memory following the liquid as it spreads
+                    SmartMopTargets.FindPreferredStand(targetCell, targetCell, element, MopTool.maxMopAmt, Blocked, NearOther, WorkerCell(), standMemory);
+                    if (!relayPlaced && WorkerObject != null && (Leader == this || Leader.relayPlaced))
+                    {
+                        // The relay has just started: the leader goes to the end of the liquid, the others ahead of it.
+                        int stand = RelayStand(false);
+                        if (stand == Grid.InvalidCell)
+                        {
+                            return false;
+                        }
+                        relayPlaced = true;
+                        if (stand != targetCell)
+                        {
+                            Debug.Log("[TrueSmartMopping] relay: " + targetCell + " -> " + stand + " (start)");
+                            targetCell = stand;
+                            return true;
+                        }
+                    }
                     return false;
                 }
                 if (UpdateDryFront())
@@ -527,8 +562,7 @@ namespace TrueSmartMopping
 
             // Helper orders: a vanilla mop placer lets two duplicants work one puddle, so a manual order that has plenty of
             // liquid left out of its own reach hands out further orders (same priority, own stand) for idle duplicants.
-            // Next to another order: only a rich window keeps its distance (two duplicants would share the same liquid); in the
-            // thin tail they work side by side, as with vanilla placers, so the one at the edge finishes quickly and they leapfrog.
+            // Once a helper has a duplicant the orders work as a relay (see RelayStride).
             // Dry front. Skimming the richest ranges is fast while the liquid is thick, but it leaves a thin film on every cell
             // that hardly flows and has to be visited again cell by cell. So once no range holds more than DryFrontKg, the
             // order works like a vanilla errand: it stands at the end of the liquid (the end nearest to the worker), mops that
@@ -542,6 +576,10 @@ namespace TrueSmartMopping
             /// <summary>Enters (or, when thick liquid has come back, leaves) the dry front stage; true while in it.</summary>
             public bool UpdateDryFront()
             {
+                if (relay)
+                {
+                    return false;
+                }
                 float max = 0f;
                 using (Scope())
                 {
@@ -614,6 +652,166 @@ namespace TrueSmartMopping
                     }
                 }
                 return best;
+            }
+
+            // Relay: two or more duplicants on one manual order. This is the fastest pattern of vanilla mopping: the duplicants
+            // dry the liquid from one end, a little apart. The one behind stands at the end of the liquid, the one ahead holds
+            // back what would flow into the range behind it, so that range dries out quickly; then the one behind goes ahead of
+            // the foremost and holds back in turn. Each stays until its own range is dry. Measured on a flat 25-cell puddle of
+            // 40 kg per cell: with one cell between neighbours (stride 2), two duplicants took 50-62 s (vanilla dragged again
+            // every 5 s: 60-68 s; skimming the richest ranges: 77-81 s) and three took 40-43 s (vanilla 40-46 s).
+            // A single duplicant has nobody to hold the liquid back, so it keeps skimming (relay alone left liquid behind).
+            public const int DefaultRelayStride = 2;
+            internal static int RelayStride = DefaultRelayStride; // columns between the stands of neighbours (tests vary it)
+            public const float RelayHelperCheckSeconds = 0.4f;
+            public const int RelayIdleTicks = 2;
+            public StatesInstance leader; // helpers: the order that handed them out
+            public bool relay;
+            private int relayDir; // on the leader: +1 the relay runs right, -1 left, 0 not chosen yet
+            private bool relayPlaced;
+
+            private StatesInstance Leader
+            {
+                get { return leader ?? this; }
+            }
+
+            // The leader and its helpers that still exist.
+            private IEnumerable<StatesInstance> Group()
+            {
+                var l = Leader;
+                yield return l;
+                foreach (var h in l.helpers)
+                {
+                    if (!h.done)
+                    {
+                        yield return h.smi;
+                    }
+                }
+            }
+
+            /// <summary>Relay is on while at least two duplicants work orders of the same group.</summary>
+            public void UpdateRelay()
+            {
+                int working = 0;
+                foreach (var m in Group())
+                {
+                    if (!m.master.done && m.WorkerObject != null)
+                    {
+                        working++;
+                    }
+                }
+                bool now = master.manual && working >= 2;
+                if (now == relay)
+                {
+                    return;
+                }
+                relay = now;
+                relayPlaced = false;
+                if (now && leader == null)
+                {
+                    relayDir = 0;
+                }
+                if (!now)
+                {
+                    dryFront = false;
+                    dryFrontPlaced = false;
+                }
+                Debug.Log("[TrueSmartMopping] relay " + (now ? "on (" + working + " duplicants)" : "off"));
+            }
+
+            /// <summary>
+            /// The relay stand. The first one placed (the leader) takes the end of the liquid nearest to its duplicant; the others
+            /// stand RelayStride columns ahead of the foremost one placed. With <paramref name="leap"/> this order counts as placed
+            /// too (moving on after its range is dry, or handing out a helper ahead of itself). Beyond the far end the stand is
+            /// clamped to the liquid, so whatever flowed back is taken last. Invalid while the leader has not chosen a direction.
+            /// </summary>
+            private int RelayStand(bool leap)
+            {
+                using var scope = Scope();
+                int minCol = int.MaxValue, maxCol = int.MinValue;
+                foreach (int c in standMemory)
+                {
+                    if (SmartMopTargets.IsMoppable(c, element, MopTool.maxMopAmt))
+                    {
+                        int col = Grid.CellColumn(c);
+                        minCol = Mathf.Min(minCol, col);
+                        maxCol = Mathf.Max(maxCol, col);
+                    }
+                }
+                if (minCol == int.MaxValue)
+                {
+                    return Grid.InvalidCell;
+                }
+                int from = WorkerCell();
+                if (!Grid.IsValidCell(from))
+                {
+                    from = targetCell;
+                }
+                int row = Grid.IsValidCell(from) ? Grid.CellRow(from) : 0;
+                var l = Leader;
+                if (l.relayDir == 0)
+                {
+                    if (l != this)
+                    {
+                        return Grid.InvalidCell;
+                    }
+                    int fromCol = Grid.IsValidCell(from) ? Grid.CellColumn(from) : (minCol + maxCol) / 2;
+                    relayDir = Mathf.Abs(fromCol - minCol) <= Mathf.Abs(fromCol - maxCol) ? 1 : -1;
+                }
+                int dir = l.relayDir;
+                bool any = false;
+                int front = 0;
+                foreach (var m in Group())
+                {
+                    if ((m == this && !leap) || m.master.done || m.WorkerObject == null || !m.relayPlaced || !Grid.IsValidCell(m.targetCell))
+                    {
+                        continue;
+                    }
+                    int col = Grid.CellColumn(m.targetCell);
+                    if (!any || (col - front) * dir > 0)
+                    {
+                        front = col;
+                    }
+                    any = true;
+                }
+                int wanted = any ? front + RelayStride * dir : (dir > 0 ? minCol : maxCol) + dir;
+                int lo = minCol, hi = maxCol;
+                if (hi - lo >= 2)
+                {
+                    lo++;
+                    hi--;
+                }
+                wanted = Mathf.Clamp(wanted, lo, hi);
+                int best = Grid.InvalidCell;
+                int bestKey = int.MaxValue;
+                foreach (int c in standMemory)
+                {
+                    if (!SmartMopTargets.IsStandable(c) || Blocked(c)
+                        || SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick) <= 0f)
+                    {
+                        continue;
+                    }
+                    int key = Mathf.Abs(Grid.CellColumn(c) - wanted) * 100 + Mathf.Abs(Grid.CellRow(c) - row);
+                    if (key < bestKey)
+                    {
+                        bestKey = key;
+                        best = c;
+                    }
+                }
+                return best;
+            }
+
+            // True for the marker (chore master) of an order of this group.
+            private bool IsGroupMarker(GameObject go)
+            {
+                foreach (var m in Group())
+                {
+                    if (m.master.gameObject == go)
+                    {
+                        return true;
+                    }
+                }
+                return false;
             }
 
             // Marching direction along the row in the dry front stage: +1 right, -1 left, 0 not chosen yet.
@@ -750,41 +948,24 @@ namespace TrueSmartMopping
             private readonly List<SmartMopChore> helpers = new List<SmartMopChore>();
             private float nextHelperCheck;
 
-            /// <summary>Hands out one more order when a rich stand is free; at most one unstarted helper at a time.</summary>
+            /// <summary>
+            /// Hands out one more order for an idle duplicant; at most one unstarted helper at a time. Before the relay starts it
+            /// goes to the richest free stand, during the relay ahead of the foremost duplicant.
+            /// </summary>
             public void TrySpawnHelper()
             {
-                if (isHelper || !master.manual || mopTicks < 5 || Time.time < nextHelperCheck || targetCell == Grid.InvalidCell)
+                if (isHelper || !master.manual || WorkerObject == null || Time.time < nextHelperCheck || targetCell == Grid.InvalidCell)
                 {
                     return;
                 }
-                nextHelperCheck = Time.time + HelperCheckSeconds;
+                nextHelperCheck = Time.time + (relay ? RelayHelperCheckSeconds : HelperCheckSeconds);
                 helpers.RemoveAll(h => h.done);
                 if (helpers.Count >= MaxHelpers || helpers.Exists(h => h.smi.WorkerObject == null))
                 {
                     return;
                 }
-                int best = Grid.InvalidCell;
-                float bestKg = HelperMinKg;
-                using (Scope())
-                {
-                    foreach (int c in standMemory)
-                    {
-                        if (!SmartMopTargets.IsStandable(c) || Blocked(c) || TooCloseToAnyOrder(c))
-                        {
-                            continue;
-                        }
-                        float p = SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick);
-                        if (NearOther(c) && p >= NearPenaltyMinKg)
-                        {
-                            continue;
-                        }
-                        if (p > bestKg)
-                        {
-                            bestKg = p;
-                            best = c;
-                        }
-                    }
-                }
+                float bestKg;
+                int best = relay ? RelayHelperStand(out bestKg) : RichHelperStand(out bestKg);
                 if (best == Grid.InvalidCell)
                 {
                     return;
@@ -802,10 +983,73 @@ namespace TrueSmartMopping
                 if (helper != null)
                 {
                     helper.smi.isHelper = true;
+                    helper.smi.leader = this;
                     helper.smi.sweep = sweep;
                     helpers.Add(helper);
-                    Debug.Log("[TrueSmartMopping] helper order at " + best + " (" + bestKg.ToString("F0") + " kg/tick)");
+                    Debug.Log("[TrueSmartMopping] helper order at " + best + " (" + bestKg.ToString("F0") + " kg/tick)" + (relay ? " (relay)" : ""));
                 }
+            }
+
+            /// <summary>When the order ends, helpers nobody has taken are withdrawn (nobody walks there to find nothing).</summary>
+            public void CancelUnstartedHelpers()
+            {
+                foreach (var h in helpers)
+                {
+                    if (!h.done && h.smi.WorkerObject == null)
+                    {
+                        h.MarkDone();
+                        h.Cancel("SmartMop leader finished");
+                        h.smi.ReleaseClaim();
+                    }
+                }
+                // helpers still at work stay in the group (they keep relaying among themselves)
+                helpers.RemoveAll(h => h.done);
+            }
+
+            private int RelayHelperStand(out float kg)
+            {
+                kg = 0f;
+                if (!relayPlaced)
+                {
+                    return Grid.InvalidCell;
+                }
+                int best = RelayStand(true);
+                if (best == targetCell)
+                {
+                    return Grid.InvalidCell;
+                }
+                using (Scope())
+                {
+                    kg = best == Grid.InvalidCell ? 0f : SmartMopTargets.WindowPotential(best, element, MopTool.maxMopAmt, MopAmountPerTick);
+                }
+                return best;
+            }
+
+            private int RichHelperStand(out float kg)
+            {
+                int best = Grid.InvalidCell;
+                kg = HelperMinKg;
+                using (Scope())
+                {
+                    foreach (int c in standMemory)
+                    {
+                        if (!SmartMopTargets.IsStandable(c) || Blocked(c) || TooCloseToAnyOrder(c))
+                        {
+                            continue;
+                        }
+                        float p = SmartMopTargets.WindowPotential(c, element, MopTool.maxMopAmt, MopAmountPerTick);
+                        if (NearOther(c) && p >= NearPenaltyMinKg)
+                        {
+                            continue;
+                        }
+                        if (p > kg)
+                        {
+                            kg = p;
+                            best = c;
+                        }
+                    }
+                }
+                return best;
             }
 
             // Another order's stand within reach of this window (the 3-wide ranges would overlap).
@@ -919,6 +1163,17 @@ namespace TrueSmartMopping
                 }
                 int own = Grid.PosToCell(WorkerObject.transform.GetPosition());
                 float potential;
+                if (relay)
+                {
+                    int stand = RelayStand(true);
+                    if (stand != Grid.InvalidCell)
+                    {
+                        steps++;
+                        Debug.Log("[TrueSmartMopping] relay: " + targetCell + " -> " + stand);
+                        next = stand;
+                        return true;
+                    }
+                }
                 if (UpdateDryFront())
                 {
                     int edge = FindMarchStand(own);
@@ -971,15 +1226,13 @@ namespace TrueSmartMopping
                     {
                         return;
                     }
+                    smi.UpdateRelay();
                     if (smi.CheckFinished())
                     {
                         smi.GoTo(finished);
                         return;
                     }
-                    if (smi.GetCurrentState() == mopping)
-                    {
-                        smi.TrySpawnHelper();
-                    }
+                    smi.TrySpawnHelper();
                     // The order switches to the better cell immediately; a duplicant that is mopping follows after a short wait.
                     if (smi.TryReposition() && smi.GetCurrentState() == moveToTarget)
                     {
@@ -1040,12 +1293,12 @@ namespace TrueSmartMopping
                         else if (smi.WindowCount() == 0)
                         {
                             // Vanilla keeps working for a moment after the liquid is gone; pretend to mop before moving on.
-                            if (++smi.idleTicks >= (smi.dryFront ? 1 : IdleTicksBeforeNext))
+                            if (++smi.idleTicks >= (smi.relay ? StatesInstance.RelayIdleTicks : smi.dryFront ? 1 : IdleTicksBeforeNext))
                             {
                                 smi.GoTo(chooseNext);
                             }
                         }
-                        else if (smi.mopTimer > 16f || smi.MarchShouldLeave())
+                        else if (!smi.relay && (smi.mopTimer > 16f || smi.MarchShouldLeave()))
                         {
                             smi.GoTo(chooseNext);
                         }
@@ -1080,6 +1333,7 @@ namespace TrueSmartMopping
                     float total = Time.time - smi.startTime;
                     Debug.Log("[TrueSmartMopping] chore finished: total=" + total.ToString("F1") + "s move=" + smi.moveTime.ToString("F1") + "s mop=" + smi.mopTime.ToString("F1") + "s moves=" + smi.moves + " mopped=" + smi.totalMopped.ToString("F1") + "kg rate=" + (smi.totalMopped / Mathf.Max(total, 0.01f)).ToString("F1") + "kg/s");
                     smi.ReleaseClaim();
+                    smi.CancelUnstartedHelpers();
                     smi.master.MarkDone();
                     // Cancel removes the chore from the provider; otherwise run_until_complete restarts it endlessly.
                     smi.master.Cancel("SmartMopChore finished");
