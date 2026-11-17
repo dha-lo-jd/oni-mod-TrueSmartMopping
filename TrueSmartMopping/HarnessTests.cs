@@ -187,7 +187,7 @@ internal static class HarnessTests
 
     // mode: "smart" = one smart-mop order; "vanilla1" = vanilla placers dragged once over the puddle; "vanilla2" = the player
     // drags again every 5 s (new films get new placers). Duplicants start at the left end of the room.
-    private static IEnumerator FlatScenario(string name, string mode, int puddleWidth, int dupeCount, float massPerCell, string gas = "air", int relay = 0)
+    private static IEnumerator FlatScenario(string name, string mode, int puddleWidth, int dupeCount, float massPerCell, string gas = "air", int relay = 0, bool quiet = true)
     {
         if (relay > 0) SmartMopChore.StatesInstance.RelayStride = relay;
         gasKind = gas;
@@ -204,6 +204,7 @@ internal static class HarnessTests
             dupes.Add(nd);
             yield return null;
             NormalizeDupe(nd);
+            if (quiet) QuietTestDuplicants.Dupes.Add(nd);
         }
         SmartMopChore chore = null;
         if (mode == "smart")
@@ -217,6 +218,7 @@ internal static class HarnessTests
             PlaceVanillaMops();
         }
         double t0 = GameClock.Instance.GetTime();
+        int reactSamples = 0; // 5 samples a second: time any duplicant spent in a reaction
         var marks = new SortedDictionary<string, double>();
         var sw = Stopwatch.StartNew();
         float cur = before;
@@ -250,6 +252,11 @@ internal static class HarnessTests
                         var navc = d.GetComponent<Navigator>();
                         if (navc != null && navc.IsMoving()) sb.Append(",tr=").Append(navc.GetNextTransition().anim.ToString());
                     }
+                }
+                foreach (var d in dupes)
+                {
+                    var ka = d.GetComponent<KBatchedAnimController>();
+                    if (ka != null && ka.currentAnim == (HashedString)"react") reactSamples++;
                 }
                 sb.Append(" | liquid=").Append(LiquidMass().ToString("F2"));
                 UnityEngine.Debug.Log(sb.ToString());
@@ -313,8 +320,9 @@ internal static class HarnessTests
             : "";
         int stride = SmartMopChore.StatesInstance.RelayStride;
         SmartMopChore.StatesInstance.RelayStride = SmartMopChore.StatesInstance.DefaultRelayStride;
-        Log(name + " stride=" + stride + " gas=" + gas + " mode=" + mode + " width=" + puddleWidth + " dupes=" + dupeCount + " " + m + " residue_kg=" + cur.ToString("F2") + "/" + before.ToString("F0") + extra
+        Log(name + " quiet=" + quiet + " react_s=" + (reactSamples * 0.2f).ToString("F1") + " stride=" + stride + " gas=" + gas + " mode=" + mode + " width=" + puddleWidth + " dupes=" + dupeCount + " " + m + " residue_kg=" + cur.ToString("F2") + "/" + before.ToString("F0") + extra
             + " sim_s=" + s + " real_s=" + sw.Elapsed.TotalSeconds.ToString("F1"));
+        foreach (var d in dupes) QuietTestDuplicants.Dupes.Remove(d);
         foreach (var d in dupes) Arrange.Destroy(d);
         ModSettings.AutoMopEnabled = true;
         gasKind = "air";
@@ -423,6 +431,13 @@ internal static class HarnessTests
     [HarnessTest(Name = "tsmrelay.thick_d2_s2", Tags = "tsmrelay manual", TimeoutSeconds = 900)]
     public static IEnumerator Relay_thick_d2_s2() => FlatScenario("relay_25_thick", "smart", 25, 2, 140f, "air", 2);
 
+    // The same as tsmcmp.d2_* with the duplicants' reactions left on (as in normal play), to see what they cost.
+    [HarnessTest(Name = "tsmcmp.d2_smart_noisy", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_smart_noisy() => FlatScenario("cmp_25", "smart", 25, 2, 40f, "air", 0, false);
+
+    [HarnessTest(Name = "tsmcmp.d2_vanilla2_noisy", Tags = "tsmcmp manual", TimeoutSeconds = 900)]
+    public static IEnumerator Cmp_d2_vanilla2_noisy() => FlatScenario("cmp_25", "vanilla2", 25, 2, 40f, "air", 0, false);
+
     // CPU cost of the stand search itself (cold = rebuilds the memory, warm = reuses it) on a 3-row puddle.
     [HarnessTest(Name = "tsmbench.search_cost", Tags = "tsmbench manual", TimeoutSeconds = 300)]
     public static IEnumerator SearchCost()
@@ -473,6 +488,24 @@ internal static class HarnessTests
         Arrange.Destroy(go);
         yield return null;
         ClearInterior();
+    }
+}
+// Test only: the duplicants of a measurement do not react (chat emotes, shaking wet feet, greetings, ...). Those emotes
+// stop a duplicant for seconds at random moments, for vanilla errands and smart mop orders alike, and made the timings
+// scatter. Only duplicants spawned by a scenario are affected, and only while it runs; the game's code is unchanged.
+[HarmonyLib.HarmonyPatch(typeof(ReactionMonitor.Instance), nameof(ReactionMonitor.Instance.TryReact))]
+internal static class QuietTestDuplicants
+{
+    internal static readonly HashSet<GameObject> Dupes = new HashSet<GameObject>();
+
+    private static bool Prefix(ReactionMonitor.Instance __instance, ref bool __result)
+    {
+        if (Dupes.Count == 0 || !Dupes.Contains(__instance.gameObject))
+        {
+            return true;
+        }
+        __result = false;
+        return false;
     }
 }
 #endif
