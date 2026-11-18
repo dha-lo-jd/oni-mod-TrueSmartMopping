@@ -2,7 +2,7 @@
 
 An Oxygen Not Included mod that adds two ways to deal with spilled liquid.
 
-- **Smart Mopping**: a tool that replaces the manual area selection. Click anywhere on a puddle and the mop task is placed in the most efficient spot, mopping up the liquid from its edges. It is exactly as fast as the base-game mop command; it only saves the micromanagement.
+- **Smart Mopping**: a tool that replaces the manual area selection. Click anywhere on a puddle and the mop task is placed in the most efficient spot, mopping up the liquid from its edges. Each duplicant mops at the base-game speed (no boost); the order mops thick parts first, then dries the rest from the edge so no film is left, and up to two more duplicants can join and take turns from one end, the fastest pattern of the base-game command.
 - **Auto-Mopping**: when a duplicant comes into contact with a liquid, a Smart Mopping task is created automatically.
 
 The Workshop description (English and Japanese) is in `Workshop/`.

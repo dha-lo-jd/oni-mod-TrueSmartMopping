@@ -16,7 +16,9 @@ Instead of the standard mopping command, use the [b]Smart Mopping[/b] tool. No n
 
 Then, just sit back and wait. [i]Scourgify![/i]
 
-Surprisingly, Smart Mopping doesn't cheat or artificially boost your dupes' mopping speed; it performs exactly the same as the standard mopping task.
+Surprisingly, Smart Mopping doesn't cheat or artificially boost your dupes' mopping speed: each dupe mops at exactly the speed of the standard mopping task. What it does is stand them where a very careful player would. It takes the thick parts first, then dries what is left from the edge of the puddle, so no thin film is left behind, and the task only ends when every drop is gone.
+
+Up to two more dupes can join the task. Two or more dupes working one puddle take turns drying it from one end, a cell apart: one holds back the flow while the other dries the cell ahead of it. That is the fastest pattern of the base-game command, and Smart Mopping simply sets it up for you.
 
 If you're exceptionally diligent, and willing to sacrifice your precious time and focus, you could technically achieve the same results using only the base-game mopping commands.
 
