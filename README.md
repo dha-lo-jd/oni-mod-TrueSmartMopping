@@ -7,6 +7,8 @@ An Oxygen Not Included mod that adds two ways to deal with spilled liquid.
 
 The Workshop description (English and Japanese) is in `Workshop/`.
 
+Version 1.1.0 requires the game update U60 or later.
+
 ## Build
 
 Copy `Local.Build.props.example` to `Local.Build.props` and set `GameManagedPath` and `ModInstallPath`, then `dotnet build` the `.sln`. A Release build packages the Workshop folder under `release/TrueSmartMopping`.
