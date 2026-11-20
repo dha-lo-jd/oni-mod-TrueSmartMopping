@@ -7,7 +7,7 @@ An Oxygen Not Included mod that adds two ways to deal with spilled liquid.
 
 The Workshop description (English and Japanese) is in `Workshop/`.
 
-Version 1.1.0 works with both the game update U60 and U59 (game build 744825 or later).
+Version 1.1.1 works with both the game update U60 and U59 (game build 744825 or later).
 
 ## Build
 

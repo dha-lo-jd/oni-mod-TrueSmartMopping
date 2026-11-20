@@ -1,5 +1,15 @@
 [h1]Changelog / 更新履歴[/h1]
 
+[h2]1.1.1[/h2]
+[b]English[/b]
+[list]
+[*] Now works with both the U59 and U60 game updates (game build 744825 or later).
+[/list]
+[b]日本語[/b]
+[list]
+[*] ゲームの U59 と U60 の両方に対応しました（ゲームのビルド 744825 以降）。
+[/list]
+
 [h2]1.1.0[/h2]
 [b]English[/b]
 [list]
