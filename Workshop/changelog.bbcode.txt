@@ -3,7 +3,7 @@
 [h2]1.1.0[/h2]
 [b]English[/b]
 [list]
-[*] Updated for the U60 game update. Requires game build U60 or later.
+[*] Updated for the U60 game update. Also works with U59 (game build 744825 or later).
 [*] Smart Mopping now works the way a careful player mops by hand: it takes the thickest parts first, then dries what is left from the edge of the puddle, so no thin film is left behind and the task only ends when every drop is gone.
 [*] Up to two more dupes can join a Smart Mopping task. Two or more dupes working one puddle take turns drying it from one end, a cell apart, which is the fastest pattern of the base-game mop command. It is not faster per dupe; it only stops you from having to arrange this yourself.
 [*] Fixed a single dupe skipping the cell reserved for a helper that never came.
@@ -11,7 +11,7 @@
 [/list]
 [b]日本語[/b]
 [list]
-[*] ゲームのアップデート U60 に対応しました。U60 以降のゲームが必要です。
+[*] ゲームのアップデート U60 に対応しました。U59 でも引き続き動作します（ゲームのビルド 744825 以降）。
 [*] スマート拭き取りが、慣れたプレイヤーが手で拭くときの動きに近づきました。液体の厚い所から先に取り、残りは水たまりの端から乾かしていくので、薄い膜を取り残さず、すべて拭き取るまで作業が終わりません。
 [*] スマート拭き取りの作業に、最大 2 人まで複製人間が加わるようになりました。2 人以上で 1 つの水たまりを拭くときは、1 マスあけて並び、端から交代で乾かします。これはバニラの拭き取りコマンドでいちばん速い進め方です。複製人間 1 人あたりが速くなるわけではなく、この並び方を自分で作らなくてよくなるだけです。
 [*] 1 人のとき、助っ人用に確保したマスを、誰も来ないのに避けてしまう問題を修正しました。

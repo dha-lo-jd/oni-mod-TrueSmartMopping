@@ -19,4 +19,4 @@ ONI の Mod「"TRUE" Smart Mopping」。全 Mod 共通の規約は HQ（`../CLAU
 - 測定用の複製人間は感情表現や足の濡れに反応しないようにしてある（測定が乱れるため）。
 
 ## 版
-- 版は `TrueSmartMopping/mod_info.yaml`（と `mod.yaml`）。1.1.0 から U60（ビルド 763796）以降が必要。Workshop 説明文と変更履歴は `Workshop/`（英日）。
+- 版は `TrueSmartMopping/mod_info.yaml`（と `mod.yaml`）。1.1.0 は U60（763796）と U59（744825）の両方で動く（U59 でも tsmbench 6/6 合格。アーカイブは不要で `minimumSupportedBuild` は 744825）。Workshop 説明文と変更履歴は `Workshop/`（英日）。
